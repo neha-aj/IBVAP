@@ -60,10 +60,33 @@ class HealthPoller:
 
     async def _run(self) -> None:
         while not self._stop_requested:
-            await asyncio.gather(*(self._check_one(name) for name in self._settings.monitored_services))
+            # `return_exceptions=True` + the per-service timeout in
+            # `_check_one` are two independent safety nets around the same
+            # failure mode: neither a hang nor an unexpected exception in
+            # one service's check may ever stop this loop from reaching
+            # `sleep` and trying again -- a poller that can silently freeze
+            # is worse than useless, since `snapshot()`/the WS topic would
+            # then serve a stale reading forever with no visible sign
+            # anything's wrong.
+            results = await asyncio.gather(
+                *(self._check_one(name) for name in self._settings.monitored_services),
+                return_exceptions=True,
+            )
+            for service_name, result in zip(self._settings.monitored_services, results, strict=True):
+                if isinstance(result, Exception):
+                    logger.warning("health_check_failed", service=service_name, error=str(result))
             await asyncio.sleep(self._settings.health_poll_interval_seconds)
 
     async def _check_one(self, service_name: str) -> None:
+        try:
+            await asyncio.wait_for(
+                self._check_one_inner(service_name),
+                timeout=self._settings.health_check_overall_timeout_seconds,
+            )
+        except TimeoutError:
+            logger.warning("health_check_timed_out", service=service_name)
+
+    async def _check_one_inner(self, service_name: str) -> None:
         status = await self._probe(service_name)
         if self._last_status.get(service_name) == status:
             return  # no change -- nothing to publish (see module docstring)

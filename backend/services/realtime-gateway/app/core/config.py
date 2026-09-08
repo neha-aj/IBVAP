@@ -31,6 +31,16 @@ class Settings(CommonSettings):
     ]
     health_poll_interval_seconds: int = 15
     health_check_timeout_seconds: float = 5.0
+    # Hard ceiling on one full per-service check (probe + publish), separate
+    # from `health_check_timeout_seconds` above (which only bounds the HTTP
+    # GET itself): a Redis publish has no client-level socket timeout
+    # (`ibvap_common.redis_streams.build_redis_client` sets none), so it can
+    # hang indefinitely on a bad connection -- observed live after a
+    # `--force-recreate` where the poller's very first cycle froze forever
+    # on one stuck publish and silently stopped checking anything again.
+    # This bounds the whole per-service unit of work so one stuck call can
+    # never freeze the loop.
+    health_check_overall_timeout_seconds: float = 10.0
 
 
 @lru_cache
