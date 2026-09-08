@@ -9,4 +9,5 @@ export const analyticsService = {
   getEventsByCamera: () => api.get("/analytics/events-by-camera"),
   getPpeCompliance: () => api.get("/analytics/ppe-compliance"),
   getDirectionFlow: (camera) => api.get("/analytics/direction-flow", camera ? { camera } : {}),
+  getPeopleVehiclesByCamera: () => api.get("/analytics/people-vehicles-by-camera"),
 };

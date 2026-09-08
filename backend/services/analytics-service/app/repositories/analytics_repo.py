@@ -38,6 +38,16 @@ class AnalyticsRepository:
         row = result.one()
         return {"active": row.active, "critical": row.critical}
 
+    async def people_vehicles_by_camera(self, day: dt.date) -> list[tuple[str, int, int]]:
+        result = await self._session.execute(
+            text(
+                "SELECT camera_id, person_count, vehicle_count "
+                "FROM analytics.mv_people_vehicles_by_camera WHERE day = :day"
+            ),
+            {"day": day},
+        )
+        return [(row.camera_id, row.person_count, row.vehicle_count) for row in result]
+
     async def daily_counters(self, day: dt.date) -> dict[str, int]:
         result = await self._session.execute(
             text(

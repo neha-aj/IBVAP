@@ -42,6 +42,16 @@ class NamedCountPoint(BaseModel):
     count: int
 
 
+class CameraDailyCounts(_CamelModel):
+    """`people-vehicles-by-camera`: per-camera breakdown of the same
+    person/vehicle totals `DashboardStats.peopleDetectedToday`/
+    `vehiclesDetectedToday` sum across all cameras."""
+
+    camera_id: str
+    person_count: int
+    vehicle_count: int
+
+
 class QueueStatusPoint(_CamelModel):
     """Phase 2 M14 Queue Detection: `GET /analytics/queue-length?camera=`."""
 

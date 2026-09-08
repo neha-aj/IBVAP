@@ -11,7 +11,7 @@ from app.core.config import Settings, get_settings
 from app.db.session import get_db
 from app.redis_client import get_redis_client
 from app.repositories.analytics_repo import AnalyticsRepository
-from app.schemas.stats import ActivityHourPoint, NamedCountPoint, NamedValuePoint, QueueStatusPoint
+from app.schemas.stats import ActivityHourPoint, CameraDailyCounts, NamedCountPoint, NamedValuePoint, QueueStatusPoint
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
 
@@ -104,6 +104,31 @@ async def events_by_camera(
 
     data = await cached_json(redis_client, "analytics:events-by-camera", settings.cache_ttl_seconds, compute)
     return [NamedCountPoint(**item) for item in data]
+
+
+@router.get("/people-vehicles-by-camera", response_model=list[CameraDailyCounts])
+async def people_vehicles_by_camera(
+    session: AsyncSession = Depends(get_db),
+    redis_client: Redis = Depends(get_redis_client),
+    settings: Settings = Depends(get_settings),
+    _user: TokenPayload = Depends(require_role("viewer")),
+) -> list[CameraDailyCounts]:
+    """Per-camera breakdown of the same person/vehicle totals the Dashboard
+    shows summed across all cameras -- for Live Surveillance's per-tile
+    "today" count."""
+
+    async def compute() -> list[dict]:
+        today = dt.datetime.now(dt.UTC).date()
+        rows = await AnalyticsRepository(session).people_vehicles_by_camera(today)
+        return [
+            {"cameraId": camera_id, "personCount": person_count, "vehicleCount": vehicle_count}
+            for camera_id, person_count, vehicle_count in rows
+        ]
+
+    data = await cached_json(
+        redis_client, "analytics:people-vehicles-by-camera", settings.cache_ttl_seconds, compute
+    )
+    return [CameraDailyCounts(**item) for item in data]
 
 
 @router.get("/ppe-compliance", response_model=list[NamedCountPoint])

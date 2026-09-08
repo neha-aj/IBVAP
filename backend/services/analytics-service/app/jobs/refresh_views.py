@@ -20,6 +20,7 @@ _VIEWS = [
     "analytics.mv_events_by_camera",
     "analytics.mv_direction_flow",
     "analytics.mv_ppe_violations_by_camera",
+    "analytics.mv_people_vehicles_by_camera",
 ]
 
 

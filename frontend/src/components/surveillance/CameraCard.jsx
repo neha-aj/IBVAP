@@ -6,7 +6,7 @@ import StatusDot from '../common/StatusDot';
 import { cameraService } from '../../services/cameraService';
 import { GATEWAY_ORIGIN } from '../../services/api';
 
-export default function CameraCard({ camera, detections = [], selected, onSelect }) {
+export default function CameraCard({ camera, detections = [], dailyCounts, selected, onSelect }) {
   const isOffline = camera.status === 'offline';
   const [streamUrl, setStreamUrl] = useState(null);
 
@@ -47,8 +47,14 @@ export default function CameraCard({ camera, detections = [], selected, onSelect
           </button>
         </div>
         <div className="mt-3 flex items-center gap-3 border-t pt-3 text-[11px] text-secondary">
-          <span className="flex items-center gap-1"><UserRound size={13} /> {personCount}</span>
-          <span className="flex items-center gap-1"><CarFront size={13} /> {vehicleCount}</span>
+          <span className="flex items-center gap-1" title="Currently in frame">
+            <UserRound size={13} /> {personCount}
+            {dailyCounts && <span className="text-muted">/{dailyCounts.personCount} today</span>}
+          </span>
+          <span className="flex items-center gap-1" title="Currently in frame">
+            <CarFront size={13} /> {vehicleCount}
+            {dailyCounts && <span className="text-muted">/{dailyCounts.vehicleCount} today</span>}
+          </span>
           {camera.alert ? (
             <Badge tone={isOffline ? 'offline' : 'high'}><TriangleAlert size={11} className="mr-1" />{camera.alert}</Badge>
           ) : (

@@ -2,6 +2,16 @@ import { useEffect, useRef, useState } from "react";
 import { cameraService } from "../services/cameraService";
 import { socket } from "../services/socket";
 
+// How long a track is kept showing after its last `detection.new` mention
+// before it's dropped. Each message is one video frame's worth of boxes,
+// so a single missed frame (occlusion, motion blur, a low-confidence frame)
+// used to make a person vanish from the count and reappear a moment later
+// -- visible as the per-camera counts flickering rapidly. Holding a track
+// for a short grace window smooths that out while still dropping it
+// reasonably quickly once it's actually gone.
+const TRACK_GRACE_MS = 1500;
+const PURGE_INTERVAL_MS = 500;
+
 // Detections are inherently per-camera (API Spec §2/§8) -- there is no
 // "all detections across every camera" endpoint or topic. `cameraIds` is
 // the set of cameras currently rendered (the surveillance grid); this hook
@@ -10,8 +20,10 @@ import { socket } from "../services/socket";
 // result into one array so existing per-camera filtering (`CameraGrid`,
 // `DetectionSummary`) keeps working unchanged.
 export function useDetections(cameraIds = []) {
-  const [byCamera, setByCamera] = useState({});
+  // { [cameraId]: { [trackId or detectionId]: { detection, lastSeenAt } } }
+  const [tracksByCamera, setTracksByCamera] = useState({});
   const [isLoading, setIsLoading] = useState(true);
+  const [, forceTick] = useState(0);
   const subscribedIds = useRef(new Set());
   const idsKey = cameraIds.join(",");
 
@@ -34,7 +46,17 @@ export function useDetections(cameraIds = []) {
         })
       );
       if (!cancelled) {
-        setByCamera(Object.fromEntries(results));
+        const now = Date.now();
+        setTracksByCamera(
+          Object.fromEntries(
+            results.map(([id, detections]) => [
+              id,
+              Object.fromEntries(
+                detections.map((d) => [d.trackId ?? d.id, { detection: d, lastSeenAt: now }])
+              ),
+            ])
+          )
+        );
         setIsLoading(false);
       }
     }
@@ -60,10 +82,32 @@ export function useDetections(cameraIds = []) {
 
   useEffect(() => {
     return socket.on("detection.new", ({ cameraId, detections }) => {
-      setByCamera((current) => ({ ...current, [cameraId]: detections }));
+      const now = Date.now();
+      setTracksByCamera((current) => {
+        const tracks = { ...(current[cameraId] || {}) };
+        detections.forEach((d) => {
+          tracks[d.trackId ?? d.id] = { detection: d, lastSeenAt: now };
+        });
+        return { ...current, [cameraId]: tracks };
+      });
     });
   }, []);
 
-  const detections = Object.values(byCamera).flat();
+  // Tracks age out of the grace window even if no further message ever
+  // arrives for them (e.g. the object actually left) -- a periodic tick
+  // re-renders so `now - lastSeenAt` below gets re-evaluated on its own,
+  // not just when a new message happens to arrive.
+  useEffect(() => {
+    const interval = setInterval(() => forceTick((t) => t + 1), PURGE_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, []);
+
+  const now = Date.now();
+  const detections = Object.values(tracksByCamera).flatMap((tracks) =>
+    Object.values(tracks)
+      .filter((entry) => now - entry.lastSeenAt <= TRACK_GRACE_MS)
+      .map((entry) => entry.detection)
+  );
+
   return { detections, isLoading };
 }
