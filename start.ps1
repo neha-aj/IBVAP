@@ -61,7 +61,32 @@ if ($unhealthy) {
     Write-Host "Backend is healthy." -ForegroundColor Green
 }
 
-# --- 4. Start the frontend in its own window ---
+# --- 4. Make sure port 5173 is actually free before starting the frontend ---
+# A prior run's dev server (crashed terminal, killed window, whatever) can be
+# left holding the port -- Vite would then silently start on 5174/5175/...
+# instead, or refuse to start. Always kill whatever's there first so this
+# step can never fail because of leftover state from last time.
+Write-Host "Making sure port 5173 is free..." -ForegroundColor Cyan
+$portPid = (Get-NetTCPConnection -LocalPort 5173 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess)
+if ($portPid) {
+    Write-Host "Port 5173 is held by process $portPid from a previous run -- stopping it." -ForegroundColor Yellow
+    Stop-Process -Id $portPid -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
+}
+# Also clean up any other leftover frontend dev-server processes (and their
+# parent shell windows) from a previous run of this same script, even if
+# they never actually managed to bind to 5173 -- e.g. two crashed instances
+# sitting idle. Without this, closing/reopening the terminal window alone
+# isn't enough to guarantee a clean slate.
+Get-CimInstance Win32_Process | Where-Object {
+    $_.CommandLine -like "*IBVAP\frontend*npm run dev*" -or
+    $_.CommandLine -like "*IBVAP\frontend\node_modules*vite*"
+} | ForEach-Object {
+    Write-Host "Stopping leftover frontend process $($_.ProcessId)..." -ForegroundColor Yellow
+    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+}
+
+# --- 5. Start the frontend in its own window ---
 Write-Host "Starting frontend in a new window..." -ForegroundColor Cyan
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root\frontend'; npm run dev"
 
