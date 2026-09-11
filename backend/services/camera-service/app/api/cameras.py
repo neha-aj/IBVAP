@@ -76,6 +76,7 @@ async def get_camera(
 @router.get("/{camera_id}/stream", response_model=StreamInfo)
 async def get_stream_info(
     camera_id: str,
+    modality: str | None = Query(default=None, pattern="^(thermal)$"),
     service: CameraService = Depends(get_camera_service),
     settings: Settings = Depends(get_settings),
     _user: TokenPayload = Depends(require_role("viewer")),
@@ -89,12 +90,20 @@ async def get_stream_info(
     can't attach an `Authorization` header, so without this the stream
     itself would be reachable by anyone who has (or guesses) a camera_id --
     this endpoint is the only gate, since it's the only place that's
-    actually checked `require_role` before handing the URL out."""
+    actually checked `require_role` before handing the URL out.
+
+    `modality` (M11 gap-fill): pass `modality=thermal` to get a 'dual'
+    camera's thermal half instead of its default RGB stream -- forwarded
+    as-is to the ingestion-service mjpeg route, which reads the matching
+    `CameraWorker._cache_key` slot. Not folded into the token itself (still
+    scoped to just `resource=camera_id`), since it only selects between two
+    halves of the same already-authorized camera."""
     await service.get_camera(camera_id)  # 404s if unknown
     token = create_resource_token(
         resource=camera_id, ttl_seconds=settings.stream_token_ttl_seconds, settings=settings
     )
-    return StreamInfo(mjpeg_url=f"/stream/{camera_id}/mjpeg?token={token}", hls_url=None)
+    modality_qs = f"&modality={modality}" if modality else ""
+    return StreamInfo(mjpeg_url=f"/stream/{camera_id}/mjpeg?token={token}{modality_qs}", hls_url=None)
 
 
 @router.get("/{camera_id}/snapshot")
@@ -163,6 +172,7 @@ async def delete_camera(
 async def upload_video(
     camera_id: str,
     file: UploadFile,
+    slot: str = Query(default="rgb", pattern="^(rgb|thermal)$"),
     service: CameraService = Depends(get_camera_service),
     settings: Settings = Depends(get_settings),
     media_client: MediaClient = Depends(get_media_client),
@@ -173,7 +183,12 @@ async def upload_video(
     from the resulting path exactly as it would an RTSP URL. Phase 2 M23:
     the actual file write is now proxied to Media Service rather than
     handled by this service's own (now-retired) storage backend -- see
-    `MediaClient.upload_source`'s own docstring."""
+    `MediaClient.upload_source`'s own docstring.
+
+    M11: `thermal`/`dual` cameras accept uploads too now (see
+    `CameraService.set_uploaded_source`'s own docstring for why) --
+    `slot=thermal` on a `dual` camera fills its second stream instead of
+    the primary one."""
     # Validate the camera exists (and is upload-eligible) *before*
     # forwarding anything -- a bad/unknown camera_id must never result in
     # a stored file with nothing to attach it to.
@@ -187,4 +202,4 @@ async def upload_video(
         raise ApiError(status_code=413, title="File too large")
 
     stored_path = await media_client.upload_source(camera_id=camera_id, filename=file.filename or "video", data=data)
-    return await service.set_uploaded_source(camera_id, stored_path)
+    return await service.set_uploaded_source(camera_id, stored_path, slot=slot)

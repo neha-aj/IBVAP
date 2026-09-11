@@ -2,12 +2,12 @@ import { useState } from 'react';
 import { CameraOff } from 'lucide-react';
 import DetectionOverlay from './DetectionOverlay';
 
-export default function VideoPlaceholder({ cameraName = 'CAMERA', detections = [], streamUrl = null, className = '' }) {
+export default function VideoPlaceholder({ cameraName = 'CAMERA', detections = [], streamUrl = null, className = '', fill = false }) {
   const [streamFailed, setStreamFailed] = useState(false);
   const showStream = Boolean(streamUrl) && !streamFailed;
 
   return (
-    <div className={`relative aspect-video overflow-hidden bg-[#070B10] ${className}`}>
+    <div className={`relative overflow-hidden bg-[#070B10] ${fill ? 'h-full w-full' : 'aspect-video'} ${className}`}>
       {showStream ? (
         <img
           src={streamUrl}

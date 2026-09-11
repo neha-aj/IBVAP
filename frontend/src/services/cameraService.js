@@ -10,13 +10,18 @@ export const cameraService = {
   getById: (id) => api.get(`/cameras/${id}`),
   update: (id, payload) => api.put(`/cameras/${id}`, payload),
   getStatusSummary: () => api.get("/cameras/status/summary"),
-  getStream: (id) => api.get(`/cameras/${id}/stream`),
+  // modality: undefined (default RGB) or "thermal" -- only meaningful for a
+  // 'dual' camera's second stream (M11); every other camera type omits it.
+  getStream: (id, modality) => api.get(`/cameras/${id}/stream${modality ? `?modality=${modality}` : ""}`),
   getCurrentDetections: (id) => api.get(`/cameras/${id}/detections/current`),
   getHealth: (id) => api.get(`/cameras/${id}/health`),
   create: (payload) => api.post("/cameras", payload),
-  uploadVideo: (id, file) => {
+  delete: (id) => api.delete(`/cameras/${id}`),
+  // slot: "rgb" (default) or "thermal" -- only meaningful for a 'dual'
+  // camera's second stream (M11); every other camera type just omits it.
+  uploadVideo: (id, file, slot) => {
     const formData = new FormData();
     formData.append("file", file);
-    return api.postForm(`/cameras/${id}/upload`, formData);
+    return api.postForm(`/cameras/${id}/upload${slot ? `?slot=${slot}` : ""}`, formData);
   },
 };

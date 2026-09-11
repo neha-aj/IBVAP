@@ -35,7 +35,7 @@ export default function Login() {
           <ShieldCheck size={28} className="text-info" />
           <p className="mt-3 text-xl font-bold tracking-[.08em] text-primary">IBVAP</p>
           <p className="mt-1 text-[10px] uppercase tracking-[.14em] text-secondary">
-            Intelligent Border Video Analytics
+            Intelligent Border Video Analytics Platform
           </p>
         </div>
 

@@ -41,3 +41,28 @@ def test_file_source_seeds_loop_generation_from_argument() -> None:
         camera_type="file", source_url="/tmp/video.mp4", settings=_settings(), initial_generation=7
     )
     assert source.loop_generation == 7
+
+
+def test_thermal_source_without_url_raises() -> None:
+    with pytest.raises(ApiError):
+        build_frame_source(camera_type="thermal", source_url=None, settings=_settings())
+
+
+def test_thermal_source_with_url_builds_ok() -> None:
+    source = build_frame_source(camera_type="thermal", source_url="rtsp://thermal-cam/stream", settings=_settings())
+    assert source is not None
+
+
+def test_dual_source_without_url_raises() -> None:
+    """`build_frame_source` opens one stream at a time -- for a 'dual'
+    camera, WorkerManager calls this twice (once per modality's own URL);
+    this only checks that whichever URL is missing fails the same way
+    rtsp/ip already do, not the two-worker orchestration itself (see
+    test_worker_manager.py for that)."""
+    with pytest.raises(ApiError):
+        build_frame_source(camera_type="dual", source_url=None, settings=_settings())
+
+
+def test_dual_source_with_url_builds_ok() -> None:
+    source = build_frame_source(camera_type="dual", source_url="rtsp://rgb-cam/stream", settings=_settings())
+    assert source is not None

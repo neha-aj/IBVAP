@@ -38,6 +38,7 @@ class FrameConsumer:
         group_name: str,
         read_count: int,
         block_ms: int,
+        modality: str | None = None,
     ) -> None:
         self.camera_id = camera_id
         self._redis = redis_client
@@ -46,7 +47,15 @@ class FrameConsumer:
         self._group_name = group_name
         self._read_count = read_count
         self._block_ms = block_ms
-        self._stream_key = f"cam:{camera_id}:frames"
+        # M11: None for every existing (single-stream) camera type --
+        # `_stream_key` is exactly what it was before. A 'dual' camera's
+        # second consumer passes modality="thermal" to read the parallel
+        # stream Stream Ingestion's second capture worker writes to
+        # (`FramePublisher.publish`'s own `modality` param, same naming).
+        # `self.camera_id` is deliberately left as the real camera id either
+        # way -- only the stream key changes, so publishing/logging/consumer
+        # naming below stay associated with the actual camera.
+        self._stream_key = f"cam:{camera_id}:frames" if modality is None else f"cam:{camera_id}:frames:{modality}"
         self._task: asyncio.Task | None = None
         self._stop_requested = False
 

@@ -34,3 +34,11 @@ class DetectionRead(_CamelModel):
     confidence: float
     trackId: str | None = None
     bbox: BoundingBox
+    # M11: mirrors detection-service's own Detection.fusion_score -- missed
+    # in the original PR3 pass (the design doc's §10 file checklist only
+    # named detection-service's schema; this service's own mirror copy of
+    # the same shape, per the project's "no service imports another
+    # service's package" rule, needed the same field added separately or
+    # DetectionRead(**item) would silently drop it on every dual camera's
+    # response). None for every other camera type, same as upstream.
+    fusionScore: float | None = None

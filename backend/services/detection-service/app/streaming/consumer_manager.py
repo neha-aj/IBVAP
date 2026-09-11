@@ -18,6 +18,7 @@ from ibvap_common.redis_streams import build_redis_client
 
 from app.core.config import Settings
 from app.inference.base import InferenceEngine
+from app.inference.fusion_merger import FusionMerger, FusionSettings, ModalityFeed
 from app.streaming.detection_publisher import DetectionPublisher
 from app.streaming.frame_consumer import FrameConsumer
 
@@ -69,42 +70,105 @@ class ConsumerManager:
             except Exception as exc:
                 logger.warning("camera_list_poll_failed", error=str(exc))
 
-    async def _fetch_camera_ids(self) -> list[str]:
+    async def _fetch_camera_configs(self) -> list[dict]:
         response = await self._http.get(
             f"{self._settings.camera_service_url}/internal/cameras",
             headers={"X-Internal-Token": self._settings.internal_service_token},
             timeout=10.0,
         )
         response.raise_for_status()
-        return [config["id"] for config in response.json()]
+        return response.json()
 
     async def _reconcile(self) -> None:
-        camera_ids = await self._fetch_camera_ids()
-        seen_ids = set(camera_ids)
+        configs = await self._fetch_camera_configs()
+        seen_keys: set[str] = set()
 
-        for camera_id in camera_ids:
-            existing = self._consumers.get(camera_id)
+        for config in configs:
+            camera_id = config["id"]
+            camera_type = config["type"]
+
+            if camera_type == "dual":
+                # M11: one 'dual' camera gets two FrameConsumers (RGB +
+                # thermal) sharing one FusionMerger, tracked under compound
+                # keys in `self._consumers` so both coexist -- every other
+                # camera type below keeps the exact one-consumer-per-
+                # camera_id behavior this loop always had.
+                seen_keys.add(f"{camera_id}:rgb")
+                seen_keys.add(f"{camera_id}:thermal")
+                await self._reconcile_dual_pair(camera_id)
+            else:
+                seen_keys.add(camera_id)
+                await self._reconcile_single(consumer_key=camera_id, camera_id=camera_id)
+
+        removed_keys = set(self._consumers) - seen_keys
+        for consumer_key in removed_keys:
+            await self._consumers.pop(consumer_key).stop()
+            logger.info("frame_consumer_stopped", camera_id=consumer_key, reason="camera_removed")
+
+    async def _reconcile_single(self, *, consumer_key: str, camera_id: str) -> None:
+        """Exactly the original one-consumer-per-camera reconcile logic,
+        factored out only so `_reconcile_dual_pair` can share the
+        create/restart mechanics without duplicating them -- every
+        non-'dual' camera's behavior here is unchanged from before M11."""
+        existing = self._consumers.get(consumer_key)
+        if existing is not None:
+            if existing.is_running:
+                return
+            await existing.stop()
+            del self._consumers[consumer_key]
+            logger.info("frame_consumer_restarting", camera_id=consumer_key)
+
+        self._start_consumer(consumer_key=consumer_key, camera_id=camera_id, publisher=self._publisher, modality=None)
+
+    async def _reconcile_dual_pair(self, camera_id: str) -> None:
+        rgb_key, thermal_key = f"{camera_id}:rgb", f"{camera_id}:thermal"
+        rgb = self._consumers.get(rgb_key)
+        thermal = self._consumers.get(thermal_key)
+        if rgb is not None and rgb.is_running and thermal is not None and thermal.is_running:
+            return  # both halves healthy -- nothing to do
+
+        # Either half missing or dead -- recreate both together against a
+        # fresh FusionMerger rather than trying to keep one half alive fed
+        # by a merger the other half has stopped submitting to.
+        for key, existing in ((rgb_key, rgb), (thermal_key, thermal)):
             if existing is not None:
-                if existing.is_running:
-                    continue
                 await existing.stop()
-                del self._consumers[camera_id]
-                logger.info("frame_consumer_restarting", camera_id=camera_id)
+                self._consumers.pop(key, None)
+        logger.info("frame_consumer_restarting", camera_id=camera_id)
 
-            consumer = FrameConsumer(
-                camera_id=camera_id,
-                redis_client=self._redis,
-                engine=self._engine,
-                publisher=self._publisher,
-                group_name=self._settings.consumer_group_name,
-                read_count=self._settings.frames_read_count,
-                block_ms=self._settings.frames_block_ms,
-            )
-            consumer.start()
-            self._consumers[camera_id] = consumer
-            logger.info("frame_consumer_started", camera_id=camera_id)
+        merger = FusionMerger(
+            camera_id=camera_id,
+            publisher=self._publisher,
+            settings=FusionSettings(
+                frame_sync_tolerance_ms=self._settings.fusion_frame_sync_tolerance_ms,
+                low_conf_threshold=self._settings.fusion_low_conf_threshold,
+                confidence_boost=self._settings.fusion_confidence_boost,
+                suppress_threshold=self._settings.fusion_suppress_threshold,
+                min_iou=self._settings.fusion_min_iou,
+            ),
+        )
+        self._start_consumer(
+            consumer_key=rgb_key, camera_id=camera_id,
+            publisher=ModalityFeed(merger, modality="rgb"), modality=None,
+        )
+        self._start_consumer(
+            consumer_key=thermal_key, camera_id=camera_id,
+            publisher=ModalityFeed(merger, modality="thermal"), modality="thermal",
+        )
 
-        removed_ids = set(self._consumers) - seen_ids
-        for camera_id in removed_ids:
-            await self._consumers.pop(camera_id).stop()
-            logger.info("frame_consumer_stopped", camera_id=camera_id, reason="camera_removed")
+    def _start_consumer(
+        self, *, consumer_key: str, camera_id: str, publisher: DetectionPublisher | ModalityFeed, modality: str | None
+    ) -> None:
+        consumer = FrameConsumer(
+            camera_id=camera_id,
+            redis_client=self._redis,
+            engine=self._engine,
+            publisher=publisher,
+            group_name=self._settings.consumer_group_name,
+            read_count=self._settings.frames_read_count,
+            block_ms=self._settings.frames_block_ms,
+            modality=modality,
+        )
+        consumer.start()
+        self._consumers[consumer_key] = consumer
+        logger.info("frame_consumer_started", camera_id=consumer_key)

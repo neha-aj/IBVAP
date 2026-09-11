@@ -20,6 +20,7 @@ from app.capture.base import FrameSource
 from app.capture.factory import build_frame_source
 from app.core.config import Settings
 from app.preview.frame_cache import frame_cache
+from app.preview.frame_ring_buffer import frame_ring_buffer
 from app.streaming.frame_publisher import FramePublisher
 
 logger = get_logger(__name__)
@@ -35,6 +36,8 @@ class CameraWorker:
         settings: Settings,
         redis_client: redis.Redis,
         http_client: httpx.AsyncClient,
+        modality: str | None = None,
+        report_status: bool = True,
     ) -> None:
         self.camera_id = camera_id
         # Public so WorkerManager can detect a re-upload (new sourceUrl on an
@@ -48,9 +51,27 @@ class CameraWorker:
             redis_client, jpeg_quality=settings.jpeg_quality, maxlen=settings.frame_stream_maxlen
         )
         self._http = http_client
+        # M11: both default to None/True, exactly preserving every existing
+        # single-stream camera's behavior unchanged. A 'dual' camera's
+        # second (thermal) worker is the only caller that ever passes
+        # modality="thermal" (own frame stream + own preview-cache slot,
+        # see _run/_capture_loop below) and report_status=False (the RGB
+        # worker of the pair is the one that keeps driving this camera's
+        # reported status/fps -- both workers PATCHing the same camera
+        # every second would just have them overwrite each other).
+        self._modality = modality
+        self._should_report_status = report_status
+        # M11: a 'dual' camera's second worker uses a distinct preview-cache
+        # slot (see frame_cache calls below) so it doesn't fight the RGB
+        # worker over the one live-preview entry for this camera_id.
+        self._cache_key = camera_id if modality is None else f"{camera_id}:{modality}"
         self._task: asyncio.Task | None = None
         self._stop_requested = False
         self._reported_status: str | None = None
+        # Evidence pre-roll: throttles FrameRingBuffer.push() to
+        # preroll_sample_interval_seconds regardless of capture_fps -- see
+        # that setting's own docstring for why (bounded memory).
+        self._last_preroll_push_at = 0.0
         # Set at construction (not just inside the capture loop) so a worker
         # that's slow to open isn't immediately misread as stuck by
         # `seconds_since_last_frame` before it's had any chance to read a
@@ -96,7 +117,8 @@ class CameraWorker:
                 await self._task
             except asyncio.CancelledError:
                 pass
-        await frame_cache.clear(self.camera_id)
+        await frame_cache.clear(self._cache_key)
+        await frame_ring_buffer.clear(self._cache_key)
 
     def _loop_generation_key(self) -> str:
         # Scoped by source_url (hashed -- it's a filesystem path, not a safe
@@ -164,11 +186,22 @@ class CameraWorker:
                 ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self._settings.jpeg_quality]
             )
             if ok:
-                await frame_cache.set(self.camera_id, encoded.tobytes())
+                jpeg_bytes = encoded.tobytes()
+                await frame_cache.set(self._cache_key, jpeg_bytes)
+                # Evidence pre-roll: sampled well below capture_fps (see
+                # preroll_sample_interval_seconds), additive alongside the
+                # frame_cache write above -- doesn't touch the live preview.
+                if now - self._last_preroll_push_at >= self._settings.preroll_sample_interval_seconds:
+                    await frame_ring_buffer.push(
+                        self._cache_key, jpeg_bytes, max_age_seconds=self._settings.preroll_buffer_seconds
+                    )
+                    self._last_preroll_push_at = now
 
             # Downsample to inference_fps for the Redis Stream (SAS §5.2 input).
             if now - last_publish_at >= publish_interval:
-                await self._publisher.publish(self.camera_id, frame, loop_generation=source.loop_generation)
+                await self._publisher.publish(
+                    self.camera_id, frame, loop_generation=source.loop_generation, modality=self._modality
+                )
                 last_publish_at = now
                 if source.loop_generation != persisted_generation:
                     persisted_generation = source.loop_generation
@@ -190,6 +223,8 @@ class CameraWorker:
         await self._report_status(status, fps=round(measured_fps))
 
     async def _report_status(self, status: str, *, fps: int) -> None:
+        if not self._should_report_status:
+            return
         # Always push fps (it changes often); only log on status transitions
         # to avoid noisy logs (SAS §10 structured logging).
         if status != self._reported_status:

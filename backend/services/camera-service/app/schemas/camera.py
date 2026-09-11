@@ -3,7 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
-CameraType = Literal["rtsp", "usb", "ip", "file", "webcam"]
+CameraType = Literal["rtsp", "usb", "ip", "file", "webcam", "thermal", "dual"]
 CameraStatus = Literal["online", "warning", "offline"]
 
 
@@ -40,6 +40,11 @@ class CameraCreate(_CamelModel):
         description="RTSP/ONVIF URL, USB device index, uploaded file path, or webcam device URI. "
         "For type='file', leave empty and use POST /cameras/{id}/upload instead.",
     )
+    thermal_source_url: str | None = Field(
+        default=None,
+        description="Thermal stream URL -- required (alongside source_url) when type='dual'. "
+        "Unused for every other type.",
+    )
 
 
 class Calibration(_CamelModel):
@@ -59,6 +64,7 @@ class CameraUpdate(_CamelModel):
     location: str | None = None
     sector: str | None = None
     source_url: str | None = None
+    thermal_source_url: str | None = None
     calibration: Calibration | None = None
 
 
@@ -74,6 +80,11 @@ class CameraRead(_CamelModel):
     detections: DetectionCounts
     alert: str | None
     type: CameraType
+    # M11: additive -- only meaningful for type='dual'; None for every other
+    # camera. Placed on CameraRead (not just CameraDetail, unlike source_url)
+    # so the surveillance list view can show a thermal indicator without a
+    # detail-view round trip.
+    thermal_source_url: str | None = None
 
 
 class CameraDetail(CameraRead):

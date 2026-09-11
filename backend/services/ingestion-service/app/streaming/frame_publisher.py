@@ -23,11 +23,20 @@ class FramePublisher:
         self._jpeg_quality = jpeg_quality
         self._maxlen = maxlen
 
-    async def publish(self, camera_id: str, frame: np.ndarray, *, loop_generation: int = 0) -> None:
+    async def publish(
+        self, camera_id: str, frame: np.ndarray, *, loop_generation: int = 0, modality: str | None = None
+    ) -> None:
         ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality])
         if not ok:
             return
-        stream_key = f"cam:{camera_id}:frames"
+        # M11: `modality` is None for every existing (single-stream) camera
+        # type -- stream key is unchanged. A 'dual' camera's second
+        # (thermal) worker passes modality="thermal" so its frames land on
+        # their own stream instead of overwriting the RGB one; `cameraId`
+        # below stays the real camera id either way, so detection-service's
+        # fusion step can still associate both streams' detections with the
+        # one logical camera.
+        stream_key = f"cam:{camera_id}:frames" if modality is None else f"cam:{camera_id}:frames:{modality}"
         await xadd_capped(
             self._redis,
             stream_key,

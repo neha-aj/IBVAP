@@ -26,15 +26,20 @@ if (-not (Test-DockerRunning)) {
     Write-Host "Docker is already running." -ForegroundColor Green
 }
 
-# --- 2. Free the shared ports from the other project's stack, if it's up ---
-$otherStack = "C:\Users\Neha AJ\Desktop\prototype2\M0-M3\ibvap"
-if (Test-Path "$otherStack\docker-compose.yml") {
-    $running = docker ps --filter "name=ibvap-nginx-1" --format "{{.Names}}" 2>$null
-    if ($running) {
-        Write-Host "Stopping the other project's stack to free shared ports..." -ForegroundColor Yellow
-        Push-Location $otherStack
-        docker compose down
-        Pop-Location
+# --- 2. Free the shared ports from any other project's stack, if it's up ---
+$otherStacks = @(
+    "C:\Users\Neha AJ\Desktop\prototype2\M0-M3\ibvap",
+    "C:\Users\Neha AJ\Desktop\prototype2\Lux\IBVAP+Thermal\backend"
+)
+foreach ($otherStack in $otherStacks) {
+    if (Test-Path "$otherStack\docker-compose.yml") {
+        $running = docker ps --filter "name=ibvap-nginx-1" --filter "name=ibvap-thermal-nginx-1" --format "{{.Names}}" 2>$null
+        if ($running) {
+            Write-Host "Stopping the other project's stack ($otherStack) to free shared ports..." -ForegroundColor Yellow
+            Push-Location $otherStack
+            docker compose down
+            Pop-Location
+        }
     }
 }
 
@@ -91,6 +96,6 @@ Write-Host "Starting frontend in a new window..." -ForegroundColor Cyan
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root\frontend'; npm run dev"
 
 Write-Host ""
-Write-Host "Backend:  http://localhost:8080" -ForegroundColor Green
+Write-Host "Backend:  http://127.0.0.1:8080" -ForegroundColor Green
 Write-Host "Frontend: http://localhost:5173" -ForegroundColor Green
 Write-Host "Log in with the admin credentials from backend\.env (BOOTSTRAP_ADMIN_USERNAME/PASSWORD)."

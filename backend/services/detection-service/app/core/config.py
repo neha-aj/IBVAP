@@ -42,6 +42,41 @@ class Settings(CommonSettings):
     onnx_model_path: str = "/srv/models/yolov8n.onnx"
     onnx_input_size: int = 640
 
+    # --- M11 thermal fusion (SAS M11 §6) -- only exercised for 'dual'
+    # cameras; every other camera type's inference/publish path is
+    # completely unaffected by these. ---
+    fusion_frame_sync_tolerance_ms: float = 150.0
+    fusion_low_conf_threshold: float = 0.35
+    fusion_confidence_boost: float = 0.25
+    fusion_suppress_threshold: float = 0.25
+    # Not in the design doc's own list of named env vars, but §6 step 2's
+    # ">30% bbox IoU" needs a concrete constant somewhere -- kept next to
+    # the other fusion tunables rather than hardcoded in fusion_merger.py.
+    fusion_min_iou: float = 0.30
+
+    # --- M11 edge deployment profile (SAS M11 §7) ---
+    # 'central' (default, unchanged Phase 1/2 behavior): DetectionPublisher
+    # writes straight to the central Redis Streams instance, exactly as
+    # every service in this project already does. 'edge': detections queue
+    # in a local SQLite outbox instead (see edge_outbox.py) and a separate
+    # sync_worker drains them to central Redis in the background, tolerant
+    # of the link being down.
+    deployment_mode: str = "central"
+    edge_outbox_path: str = "/data/edge_outbox.db"
+    edge_sync_batch_size: int = 100
+    edge_sync_interval_seconds: float = 5.0
+    edge_sync_initial_backoff_seconds: float = 1.0
+    edge_sync_max_backoff_seconds: float = 60.0
+    # Minimal local rule engine (zone-intrusion + count-threshold only --
+    # §7's own scope, a strict subset of event-alert-service's real rule
+    # engine) that runs against the local outbox so a site can still raise
+    # a local alert during a full connectivity outage. Off by default --
+    # 'edge' mode alone only changes where detections queue, not whether
+    # anything evaluates rules against them locally.
+    edge_local_rules: bool = False
+    edge_local_rules_count_threshold: int = 5
+    edge_local_rules_count_window_seconds: float = 60.0
+
 
 @lru_cache
 def get_settings() -> Settings:

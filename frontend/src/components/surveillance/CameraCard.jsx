@@ -8,7 +8,9 @@ import { GATEWAY_ORIGIN } from '../../services/api';
 
 export default function CameraCard({ camera, detections = [], dailyCounts, selected, onSelect }) {
   const isOffline = camera.status === 'offline';
+  const isDual = camera.type === 'dual';
   const [streamUrl, setStreamUrl] = useState(null);
+  const [thermalStreamUrl, setThermalStreamUrl] = useState(null);
 
   // camera.detections.{persons,vehicles} is always {0,0} by backend design
   // (API Spec §2 -- the frontend derives it from live detections instead),
@@ -27,12 +29,37 @@ export default function CameraCard({ camera, detections = [], dailyCounts, selec
     };
   }, [camera.id, isOffline]);
 
+  // M11: a 'dual' camera has a second, independently-captured thermal feed
+  // (cached under its own slot by ingestion-service's CameraWorker) -- fetch
+  // its stream URL the same way, just with modality='thermal'.
+  useEffect(() => {
+    let cancelled = false;
+    if (isOffline || !isDual) return;
+    cameraService.getStream(camera.id, 'thermal').then((info) => {
+      if (!cancelled) setThermalStreamUrl(`${GATEWAY_ORIGIN}${info.mjpegUrl}`);
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [camera.id, isOffline, isDual]);
+
   return (
     <article
       onClick={() => onSelect(camera)}
-      className={`panel cursor-pointer overflow-hidden transition-colors hover:border-secondary ${selected ? 'ring-1 ring-info border-info' : ''}`}
+      className={`panel cursor-pointer overflow-hidden transition-colors hover:border-secondary ${selected ? 'ring-1 ring-info border-info' : ''} ${isDual ? 'sm:col-span-2' : ''}`}
     >
-      <VideoPlaceholder cameraName={camera.id} detections={detections} streamUrl={streamUrl} />
+      {isDual ? (
+        // M11: a dual tile spans 2 grid columns (see the sm:col-span-2 above)
+        // so each half gets a full-size, un-squashed aspect-video feed --
+        // same footprint as a normal single-feed tile, just two side by side
+        // instead of one full-width one.
+        <div className="grid grid-cols-2 gap-px bg-line">
+          <VideoPlaceholder cameraName="RGB" detections={detections} streamUrl={streamUrl} />
+          <VideoPlaceholder cameraName="THERMAL" detections={[]} streamUrl={thermalStreamUrl} />
+        </div>
+      ) : (
+        <VideoPlaceholder cameraName={camera.id} detections={detections} streamUrl={streamUrl} />
+      )}
       <div className="p-3">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">

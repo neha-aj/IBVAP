@@ -43,6 +43,7 @@ async def list_internal_configs(
     return [
         InternalCameraConfig(
             id=c.external_id, name=c.name, location=c.location, type=c.type, source_url=c.source_url,
+            thermal_source_url=c.thermal_source_url,
             calibration=Calibration(**c.calibration) if c.calibration else None,
         )
         for c in cameras

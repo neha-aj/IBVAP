@@ -10,7 +10,19 @@ from app.core.config import Settings
 def build_frame_source(
     *, camera_type: str, source_url: str | None, settings: Settings, initial_generation: int = 0
 ) -> FrameSource:
-    if camera_type == "file":
+    if camera_type in ("file", "thermal", "dual"):
+        # M11 revision: 'thermal'/'dual' were originally routed through
+        # RtspFrameSource (below), matching the design doc's assumption
+        # that these are always real camera streams. In practice, this
+        # project's whole test/demo workflow is "any source video I
+        # insert" (see file_source.py's own docstring) -- no real thermal
+        # hardware exists, so testing needs an uploaded video file that
+        # *loops*, which only FileFrameSource does (RtspFrameSource has no
+        # loop logic -- a live stream is assumed never to "end"). Opening
+        # one modality's uploaded file is identical to opening a 'file'
+        # camera's; `WorkerManager` is what opens two of these (one per
+        # modality) for a 'dual' camera, not this factory (see
+        # worker_manager.py's own M11 comment).
         if not source_url:
             raise ApiError(status_code=422, title="Camera has no uploaded file yet")
         return FileFrameSource(source_url, loop=settings.loop_file_sources, initial_generation=initial_generation)

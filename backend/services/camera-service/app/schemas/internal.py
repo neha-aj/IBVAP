@@ -21,6 +21,9 @@ class InternalCameraConfig(_CamelModel):
     location: str
     type: CameraType
     source_url: str | None
+    # M11: only set for type='dual' -- the Stream Ingestion Service opens a
+    # second capture worker against this URL alongside source_url.
+    thermal_source_url: str | None = None
     # Phase 2 M14 Speed Estimation: the Event/Alert Service needs this to
     # convert pixel displacement into a real-world speed.
     calibration: Calibration | None = None

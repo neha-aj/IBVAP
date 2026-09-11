@@ -3,7 +3,7 @@ import uuid
 
 from redis.asyncio import Redis
 
-from ibvap_common.errors import ConflictError, NotFoundError
+from ibvap_common.errors import ApiError, ConflictError, NotFoundError
 from ibvap_common.redis_pubsub import publish_event
 
 from app.models.camera import Camera
@@ -43,6 +43,7 @@ def _to_read(camera: Camera) -> CameraRead:
         # null until then.
         alert=None,
         type=camera.type,  # type: ignore[arg-type]
+        thermal_source_url=camera.thermal_source_url,
     )
 
 
@@ -103,6 +104,25 @@ class CameraService:
             # POST /cameras/{id}/upload; source_url is filled in by that step.
             pass
 
+        # M11 revision: a 'dual' camera is one logical row backing two
+        # simultaneous capture workers (RGB + thermal). Originally required
+        # both URLs up front (matching the design doc's real-camera-stream
+        # assumption); relaxed to "both or neither" so a dual camera can
+        # also be created empty and filled in via two separate
+        # POST /cameras/{id}/upload calls (?slot=rgb / ?slot=thermal),
+        # matching 'file's own upload-after-create precedent -- this
+        # project's whole test/demo workflow has no real camera hardware.
+        # A *partial* pair (one URL set, the other not) is still rejected:
+        # there's no valid in-between state for a camera that needs both
+        # streams to function.
+        if data.type == "dual" and (data.source_url is None) != (data.thermal_source_url is None):
+            raise ApiError(
+                status_code=422,
+                title="Invalid camera configuration",
+                detail="type='dual' requires both source_url and thermal_source_url, or neither "
+                "(upload them separately after creation)",
+            )
+
         camera = Camera(
             external_id=external_id,
             name=data.name,
@@ -111,6 +131,7 @@ class CameraService:
             sector=sector,
             type=data.type,
             source_url=data.source_url,
+            thermal_source_url=data.thermal_source_url,
             status="offline",  # ingestion (M3) flips this once it connects
             fps=0,
         )
@@ -128,6 +149,8 @@ class CameraService:
             camera.location = data.location
         if data.source_url is not None:
             camera.source_url = data.source_url
+        if data.thermal_source_url is not None:
+            camera.thermal_source_url = data.thermal_source_url
         if data.sector is not None:
             sector = await self._sectors.get_or_create(data.sector)
             camera.sector_id = sector.id
@@ -144,15 +167,30 @@ class CameraService:
             raise NotFoundError(f"No camera with id {external_id}")
         await self._cameras.delete(camera)
 
-    async def set_uploaded_source(self, external_id: str, stored_path: str) -> CameraDetail:
+    async def set_uploaded_source(
+        self, external_id: str, stored_path: str, *, slot: str = "rgb"
+    ) -> CameraDetail:
         """Called after a video upload completes; wires the file as this
-        camera's source (Stream Ingestion Service, M3, will read from it)."""
+        camera's source (Stream Ingestion Service, M3, will read from it).
+
+        M11: `slot` defaults to "rgb" (source_url) for the original
+        'file'-type flow, unchanged. 'thermal'/'dual' cameras also accept
+        uploads now (see ingestion-service's `capture/factory.py` M11
+        revision docstring for why -- no real thermal hardware exists, so
+        testing needs an uploaded, looping file, not a live stream URL);
+        `slot="thermal"` on a 'dual' camera fills thermal_source_url
+        instead."""
         camera = await self._cameras.get_by_external_id(external_id)
         if camera is None:
             raise NotFoundError(f"No camera with id {external_id}")
-        if camera.type != "file":
-            raise ConflictError(f"Camera '{external_id}' is not a file-type camera")
-        camera.source_url = stored_path
+        if camera.type not in ("file", "thermal", "dual"):
+            raise ConflictError(f"Camera '{external_id}' does not accept file uploads")
+        if slot == "thermal":
+            if camera.type != "dual":
+                raise ConflictError(f"Camera '{external_id}' has no thermal slot (type='{camera.type}')")
+            camera.thermal_source_url = stored_path
+        else:
+            camera.source_url = stored_path
         camera = await self._cameras.update(camera)
         return _to_detail(camera)
 

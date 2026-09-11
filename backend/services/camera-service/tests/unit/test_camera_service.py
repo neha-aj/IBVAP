@@ -3,7 +3,7 @@ import uuid
 import pytest
 from pydantic import ValidationError
 
-from ibvap_common.errors import ConflictError, NotFoundError
+from ibvap_common.errors import ApiError, ConflictError, NotFoundError
 
 from app.schemas.camera import CameraCreate, CameraUpdate
 from app.services.camera_service import CameraService
@@ -127,6 +127,129 @@ async def test_create_camera_rejects_duplicate_external_id() -> None:
         await service.create_camera(
             CameraCreate(external_id="CAM-01", name="Gate 2", location="B", type="webcam")
         )
+
+
+@pytest.mark.asyncio
+async def test_create_camera_accepts_thermal_type() -> None:
+    """M11: a thermal-only camera is accepted through the existing
+    create-camera path with no ingestion/detection changes needed yet."""
+    service = CameraService(FakeCameraRepo(), FakeSectorRepo())
+    result = await service.create_camera(
+        CameraCreate(
+            external_id="CAM-THERMAL-01", name="North Fence IR", location="A",
+            type="thermal", source_url="rtsp://thermal-cam-1/stream",
+        )
+    )
+    assert result.type == "thermal"
+
+
+@pytest.mark.asyncio
+async def test_create_camera_accepts_dual_type_with_both_urls() -> None:
+    service = CameraService(FakeCameraRepo(), FakeSectorRepo())
+    result = await service.create_camera(
+        CameraCreate(
+            external_id="CAM-DUAL-01", name="North Fence Dual", location="A", type="dual",
+            source_url="rtsp://rgb-cam-1/stream", thermal_source_url="rtsp://thermal-cam-1/stream",
+        )
+    )
+    assert result.type == "dual"
+    assert result.thermal_source_url == "rtsp://thermal-cam-1/stream"
+
+
+@pytest.mark.asyncio
+async def test_create_camera_rejects_dual_type_missing_thermal_url() -> None:
+    service = CameraService(FakeCameraRepo(), FakeSectorRepo())
+    with pytest.raises(ApiError):
+        await service.create_camera(
+            CameraCreate(
+                external_id="CAM-DUAL-02", name="Bad Dual", location="A", type="dual",
+                source_url="rtsp://rgb-cam-1/stream",
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_camera_rejects_dual_type_missing_rgb_url() -> None:
+    service = CameraService(FakeCameraRepo(), FakeSectorRepo())
+    with pytest.raises(ApiError):
+        await service.create_camera(
+            CameraCreate(
+                external_id="CAM-DUAL-03", name="Bad Dual", location="A", type="dual",
+                thermal_source_url="rtsp://thermal-cam-1/stream",
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_camera_accepts_dual_type_with_neither_url() -> None:
+    """M11 revision: a 'dual' camera can also be created with neither URL
+    set, to be filled in later via two POST /upload calls (?slot=rgb /
+    ?slot=thermal) -- same precedent as 'file' cameras, which have always
+    been creatable with no source_url up front."""
+    service = CameraService(FakeCameraRepo(), FakeSectorRepo())
+    result = await service.create_camera(
+        CameraCreate(external_id="CAM-DUAL-05", name="Dual (upload flow)", location="A", type="dual")
+    )
+    assert result.type == "dual"
+
+
+@pytest.mark.asyncio
+async def test_set_uploaded_source_default_slot_sets_rgb_url_on_dual_camera() -> None:
+    service = CameraService(FakeCameraRepo(), FakeSectorRepo())
+    await service.create_camera(
+        CameraCreate(external_id="CAM-DUAL-06", name="Dual", location="A", type="dual")
+    )
+    updated = await service.set_uploaded_source("CAM-DUAL-06", "/data/media/uploads/CAM-DUAL-06/rgb.mp4")
+    assert updated.id == "CAM-DUAL-06"
+
+
+@pytest.mark.asyncio
+async def test_set_uploaded_source_thermal_slot_sets_thermal_url_on_dual_camera() -> None:
+    service = CameraService(FakeCameraRepo(), FakeSectorRepo())
+    await service.create_camera(
+        CameraCreate(external_id="CAM-DUAL-07", name="Dual", location="A", type="dual")
+    )
+    updated = await service.set_uploaded_source(
+        "CAM-DUAL-07", "/data/media/uploads/CAM-DUAL-07/thermal.mp4", slot="thermal"
+    )
+    assert updated.thermal_source_url == "/data/media/uploads/CAM-DUAL-07/thermal.mp4"
+
+
+@pytest.mark.asyncio
+async def test_set_uploaded_source_thermal_slot_rejects_non_dual_camera() -> None:
+    service = CameraService(FakeCameraRepo(), FakeSectorRepo())
+    await service.create_camera(
+        CameraCreate(external_id="CAM-THERMAL-02", name="Thermal-only", location="A", type="thermal")
+    )
+    with pytest.raises(ConflictError):
+        await service.set_uploaded_source("CAM-THERMAL-02", "/x.mp4", slot="thermal")
+
+
+@pytest.mark.asyncio
+async def test_set_uploaded_source_accepts_thermal_type_camera() -> None:
+    """A thermal-only (non-dual) camera also uses the upload flow --
+    default slot fills its own single source_url."""
+    service = CameraService(FakeCameraRepo(), FakeSectorRepo())
+    await service.create_camera(
+        CameraCreate(external_id="CAM-THERMAL-03", name="Thermal-only", location="A", type="thermal")
+    )
+    updated = await service.set_uploaded_source("CAM-THERMAL-03", "/data/media/uploads/CAM-THERMAL-03/x.mp4")
+    assert updated.id == "CAM-THERMAL-03"
+
+
+@pytest.mark.asyncio
+async def test_update_camera_sets_thermal_source_url() -> None:
+    service = CameraService(FakeCameraRepo(), FakeSectorRepo())
+    await service.create_camera(
+        CameraCreate(
+            external_id="CAM-DUAL-04", name="Dual", location="A", type="dual",
+            source_url="rtsp://rgb-cam-1/stream", thermal_source_url="rtsp://thermal-cam-1/stream",
+        )
+    )
+    updated = await service.update_camera(
+        "CAM-DUAL-04", CameraUpdate(thermal_source_url="rtsp://thermal-cam-2/stream")
+    )
+    assert updated.thermal_source_url == "rtsp://thermal-cam-2/stream"
 
 
 @pytest.mark.asyncio

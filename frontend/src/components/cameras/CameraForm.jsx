@@ -8,6 +8,7 @@ const emptyForm = {
   type: "file",
   sourceUrl: "",
   file: null,
+  thermalFile: null,
 };
 
 const TYPE_LABELS = {
@@ -16,7 +17,14 @@ const TYPE_LABELS = {
   ip: "IP camera URL",
   usb: "USB device index/URI",
   webcam: "Webcam device URI",
+  thermal: "Thermal camera -- upload a video file",
+  dual: "RGB + thermal pair -- upload two video files",
 };
+
+// M11: these two behave like 'file' (upload, not a URL) -- no real thermal
+// hardware exists for this deployment, so testing needs an uploaded,
+// looping video the same way every other camera type does.
+const UPLOAD_BASED_TYPES = new Set(["file", "thermal", "dual"]);
 
 export default function CameraForm({ camera, onSave, onClose }) {
   const [form, setForm] = useState(emptyForm);
@@ -49,16 +57,24 @@ export default function CameraForm({ camera, onSave, onClose }) {
     setForm((current) => ({ ...current, file: e.target.files?.[0] || null }));
   }
 
+  function handleThermalFileChange(e) {
+    setForm((current) => ({ ...current, thermalFile: e.target.files?.[0] || null }));
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
 
     if (!form.name.trim() || !form.location.trim()) return;
-    if (!isEditing && form.type === "file" && !form.file) {
+    if (!isEditing && UPLOAD_BASED_TYPES.has(form.type) && !form.file) {
       setError("Choose a video file to upload.");
       return;
     }
-    if (!isEditing && form.type !== "file" && !form.sourceUrl.trim()) {
+    if (!isEditing && form.type === "dual" && !form.thermalFile) {
+      setError("Choose a thermal video file to upload.");
+      return;
+    }
+    if (!isEditing && !UPLOAD_BASED_TYPES.has(form.type) && !form.sourceUrl.trim()) {
       setError("Enter a source URL.");
       return;
     }
@@ -149,18 +165,34 @@ export default function CameraForm({ camera, onSave, onClose }) {
                   options={Object.entries(TYPE_LABELS).map(([value, label]) => ({ value, label }))}
                 />
 
-                {form.type === "file" ? (
-                  <label className="block">
-                    <span className="mb-2 block text-[9px] font-bold uppercase tracking-wider text-muted">
-                      Video File
-                    </span>
-                    <input
-                      type="file"
-                      accept="video/*"
-                      onChange={handleFileChange}
-                      className="w-full border border-line bg-panelSecondary px-3 py-2.5 text-xs text-secondary outline-none file:mr-3 file:border-0 file:bg-info/10 file:px-3 file:py-1.5 file:text-info"
-                    />
-                  </label>
+                {UPLOAD_BASED_TYPES.has(form.type) ? (
+                  <>
+                    <label className="block">
+                      <span className="mb-2 block text-[9px] font-bold uppercase tracking-wider text-muted">
+                        {form.type === "dual" ? "RGB Video File" : "Video File"}
+                      </span>
+                      <input
+                        type="file"
+                        accept="video/*"
+                        onChange={handleFileChange}
+                        className="w-full border border-line bg-panelSecondary px-3 py-2.5 text-xs text-secondary outline-none file:mr-3 file:border-0 file:bg-info/10 file:px-3 file:py-1.5 file:text-info"
+                      />
+                    </label>
+
+                    {form.type === "dual" && (
+                      <label className="block">
+                        <span className="mb-2 block text-[9px] font-bold uppercase tracking-wider text-muted">
+                          Thermal Video File
+                        </span>
+                        <input
+                          type="file"
+                          accept="video/*"
+                          onChange={handleThermalFileChange}
+                          className="w-full border border-line bg-panelSecondary px-3 py-2.5 text-xs text-secondary outline-none file:mr-3 file:border-0 file:bg-info/10 file:px-3 file:py-1.5 file:text-info"
+                        />
+                      </label>
+                    )}
+                  </>
                 ) : (
                   <Field
                     label="Source URL"

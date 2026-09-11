@@ -10,10 +10,17 @@ export default function DetectionSummary({ camera, detections }) {
       )
     : 0;
 
+  // camera.detections.{persons,vehicles} is always {0,0} by backend design
+  // (API Spec §2 -- see CameraCard's own comment on this) -- derive counts
+  // from the live `detections` prop instead, same as CameraCard does.
+  const personCount = detections.filter((d) => d.type === "person").length;
+  const vehicleCount = detections.filter((d) => d.type === "vehicle").length;
+  const unknownCount = detections.filter((d) => d.type !== "person" && d.type !== "vehicle").length;
+
   const stats = [
-    [camera.detections.persons, "Persons"],
-    [camera.detections.vehicles, "Vehicles"],
-    [0, "Unknown"],
+    [personCount, "Persons"],
+    [vehicleCount, "Vehicles"],
+    [unknownCount, "Unknown"],
     [`${average}%`, "Avg confidence"],
   ];
 
