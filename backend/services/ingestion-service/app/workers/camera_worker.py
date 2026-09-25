@@ -33,9 +33,14 @@ logger = get_logger(__name__)
 # only ever reads it). Kept in Redis rather than in this process so a pause
 # survives an ingestion restart and camera-service doesn't need a direct
 # line to this service.
-# How often a paused/unpaused worker re-checks that set -- a resume takes
-# effect within this long, without a Redis round-trip on every captured frame.
-_PAUSE_POLL_SECONDS = 0.5
+# How often a paused/unpaused worker re-checks that set -- a pause/resume
+# click takes effect within this long, without a Redis round-trip on every
+# captured frame. 0.15s (versus a Redis SISMEMBER call on literally every
+# frame) is still a small fraction of one call per active camera per
+# second, so tightened from the original 0.5s -- that was the main
+# contributor to the visible lag between clicking Pause/Resume and the feed
+# actually freezing/unfreezing.
+_PAUSE_POLL_SECONDS = 0.15
 # A generated thermal view is re-rendered at most this often (plus once for every
 # frame sent to analysis) -- thermal footage is low frame-rate anyway, and it keeps
 # the extra CPU per derived camera small.

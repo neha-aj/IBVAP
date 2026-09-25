@@ -178,6 +178,14 @@ server {
         proxy_buffering off;               # MJPEG needs to stream, not buffer
         proxy_set_header Connection "";
         proxy_http_version 1.1;
+        # Lets the frontend (a different origin -- 127.0.0.1:5173 dev server,
+        # vs. this gateway's own port) draw a frame from the <img> onto a
+        # <canvas> to freeze it client-side. Without this the canvas is
+        # "tainted" the instant it draws a cross-origin frame and throws on
+        # export -- a plain GET with no custom headers/credentials needs no
+        # preflight, so this one header is the whole fix. Same single
+        # allowed origin as every other route (see cors-snippet).
+        add_header 'Access-Control-Allow-Origin' 'http://127.0.0.1:5173' always;
     }
 
     location = /health/ingestion {
