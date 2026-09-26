@@ -11,7 +11,12 @@ To populate this folder on a fresh checkout, place:
 - `license_plate_best.pt` -- YOLOv8s fine-tuned on Roboflow's
   `license-plate-recognition-rxg4e` dataset. Used by `anpr-service` when
   `USE_TRAINED_PLATE_MODEL=true`.
+- `fighting_classifier.pt` -- a small LSTM over 2-person MediaPipe pose-
+  landmark sequences, trained on the Kaggle "Real Life Violence Situations"
+  dataset. Used by `pose-service` when `USE_TRAINED_FIGHTING_MODEL=true`.
+  Independent of, not a replacement for, event-alert-service's own
+  proximity+erratic-motion fighting heuristic -- both can fire.
 
-Both flags default to `false` (the original heuristic/Haar-cascade path)
-until you've placed the matching file here and verified it live -- neither
+All three flags default to `false` (the original heuristic/classical path)
+until you've placed the matching file here and verified it live -- no
 service will fail to start if a file is missing, it just falls back.

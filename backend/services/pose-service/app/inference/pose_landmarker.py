@@ -58,11 +58,25 @@ class PoseLandmarkerModel:
         self._landmarker = vision.PoseLandmarker.create_from_options(options)
 
     def detect(self, bgr_frame: np.ndarray) -> list[PoseReading]:
+        readings, _ = self.detect_with_landmarks(bgr_frame)
+        return readings
+
+    def detect_with_landmarks(self, bgr_frame: np.ndarray) -> tuple[list[PoseReading], list[np.ndarray]]:
+        """Same posture classification as `detect()` (identical readings,
+        one MediaPipe call either way -- this isn't a second, more expensive
+        path), plus each corresponding person's raw landmark vector: a flat
+        (33*3,) array of [x, y, visibility] per joint, in MediaPipe's own
+        joint order. `detect()` is what every existing caller/test still
+        uses unmodified; this is additive, for app/inference/
+        fighting_classifier.py's trained model, which needs the actual
+        joint geometry a single reduced (x, y, posture) reading can't
+        provide."""
         rgb_frame = bgr_frame[:, :, ::-1]  # MediaPipe expects RGB, frames arrive as BGR (cv2 convention)
         mp_image = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=np.ascontiguousarray(rgb_frame))
         result = self._landmarker.detect(mp_image)
 
         readings: list[PoseReading] = []
+        landmark_vectors: list[np.ndarray] = []
         for pose_landmarks in result.pose_landmarks:
             landmarks = {i: lm for i, lm in enumerate(pose_landmarks)}
             reading = classify_landmarks(
@@ -73,7 +87,11 @@ class PoseLandmarkerModel:
             )
             if reading is not None and reading.confidence >= self._min_pose_confidence:
                 readings.append(reading)
-        return readings
+                vector = np.zeros(len(pose_landmarks) * 3, dtype=np.float32)
+                for i, lm in enumerate(pose_landmarks):
+                    vector[i * 3 : i * 3 + 3] = [lm.x, lm.y, lm.visibility]
+                landmark_vectors.append(vector)
+        return readings, landmark_vectors
 
     def close(self) -> None:
         self._landmarker.close()

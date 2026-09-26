@@ -74,6 +74,33 @@ class Settings(CommonSettings):
     # below this it counts as "bent" (seated).
     knee_bend_max_degrees: float = 155.0
 
+    # --- Trained fighting-detection model (app/inference/fighting_classifier.py) ---
+    # Off by default: only flip once models/fighting_classifier.pt actually
+    # exists and has been verified live -- a missing file disables this
+    # detector entirely (event-alert-service's own heuristic keeps working
+    # regardless either way, this is an independent additional signal, not
+    # a replacement -- see fighting_classifier.py's own docstring).
+    use_trained_fighting_model: bool = False
+    fighting_model_path: str = "/srv/custom-models/fighting_classifier.pt"
+    # Fallback only -- the checkpoint itself stores its own real seq_len
+    # (see the training notebook's save step) and that value always wins;
+    # this is just a sane default if that key were ever somehow missing.
+    fighting_model_default_seq_len: int = 20
+    event_alert_service_url: str = "http://event-alert-service:8000"
+    # Same percentage-of-frame units as event-alert-service's own
+    # `fighting_proximity_threshold` -- two people's pose-center points
+    # within this distance are treated as a candidate pair.
+    fighting_pair_proximity_threshold: float = 12.0
+    # 0.4: the confidence threshold this model was validated at during
+    # training (see the Colab notebook's own train/val split), not
+    # re-derived here -- re-tune against this deployment's own real camera
+    # feeds if needed, the same way every other trained-model threshold in
+    # this codebase was.
+    fighting_model_confidence_threshold: float = 0.4
+    # Per-camera cooldown so an ongoing fight doesn't re-fire every sampled
+    # tick -- same reasoning as fire-smoke-service's own alert_cooldown_seconds.
+    fighting_model_cooldown_seconds: float = 60.0
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -25,9 +25,11 @@ from ibvap_common.logging import get_logger
 from ibvap_common.redis_streams import build_redis_client
 
 from app.core.config import Settings
+from app.inference import fighting_classifier
 from app.inference.pose_landmarker import PoseLandmarkerModel
 from app.services.pose_service import PoseService
 from app.streaming.camera_client import CameraClient
+from app.streaming.event_client import EventClient
 from app.streaming.frame_consumer import FrameConsumer
 from app.streaming.pose_publisher import PosePublisher
 
@@ -43,6 +45,24 @@ class ReconcileManager:
         self._http = httpx.AsyncClient()
         self._camera_client = CameraClient(self._http, settings)
         self._publisher = PosePublisher(self._redis)
+        # One shared instance across every camera (unlike PoseLandmarkerModel
+        # above) -- see TrainedFightingDetector's own docstring. None if
+        # disabled or the weights file couldn't be loaded, in which case
+        # every camera below falls back to plain posture detection with no
+        # fighting check at all (event-alert-service's own heuristic is
+        # unaffected either way).
+        self._fighting_detector = (
+            fighting_classifier.load_if_enabled(
+                model_path=settings.fighting_model_path,
+                seq_len=settings.fighting_model_default_seq_len,
+                pair_proximity_threshold=settings.fighting_pair_proximity_threshold,
+                confidence_threshold=settings.fighting_model_confidence_threshold,
+                cooldown_seconds=settings.fighting_model_cooldown_seconds,
+                event_client=EventClient(self._http, settings),
+            )
+            if settings.use_trained_fighting_model
+            else None
+        )
         self._poll_task: asyncio.Task | None = None
         self._stopped = False
 
@@ -105,7 +125,15 @@ class ReconcileManager:
                 knee_bend_max_degrees=self._settings.knee_bend_max_degrees,
             )
             self._models[camera_id] = model
-            pose_service = PoseService(publisher=self._publisher, detect=model.detect)
+            pose_service = (
+                PoseService(
+                    publisher=self._publisher,
+                    detect_with_landmarks=model.detect_with_landmarks,
+                    fighting_detector=self._fighting_detector,
+                )
+                if self._fighting_detector is not None
+                else PoseService(publisher=self._publisher, detect=model.detect)
+            )
             consumer = FrameConsumer(
                 camera_id=camera_id,
                 redis_client=self._redis,

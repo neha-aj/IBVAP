@@ -363,12 +363,23 @@ services:
       <<: *common-env
       SERVICE_NAME: pose-service
       CAMERA_SERVICE_URL: http://camera-service:8000
+      EVENT_ALERT_SERVICE_URL: http://event-alert-service:8000
+      # Colab-trained fighting classifier (models/README.md) -- an
+      # independent additional signal alongside event-alert-service's own
+      # heuristic, not a replacement; disabled gracefully if the file below
+      # is ever missing.
+      USE_TRAINED_FIGHTING_MODEL: "true"
+      FIGHTING_MODEL_PATH: /srv/custom-models/fighting_classifier.pt
+    volumes:
+      - ./models/fighting_classifier.pt:/srv/custom-models/fighting_classifier.pt:ro
     depends_on:
       redis:
         condition: service_healthy
       camera-service:
         condition: service_healthy
       ingestion-service:
+        condition: service_healthy
+      event-alert-service:
         condition: service_healthy
     networks: [ibvap-internal]
     healthcheck:
