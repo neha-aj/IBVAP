@@ -117,6 +117,12 @@ class TrainedFightingDetector:
     ) -> None:
         import torch
 
+        # Same fix as fire-smoke-service's/anpr-service's yolo_* modules --
+        # see yolo_scorer.py's comment. This model is much smaller so the
+        # cost was less severe here, but the same oversubscription risk
+        # applies whenever several torch-based services share a host.
+        torch.set_num_threads(1)
+
         checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
         input_size = checkpoint["input_size"]
         self._seq_len = checkpoint.get("seq_len", seq_len)

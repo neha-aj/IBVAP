@@ -32,7 +32,24 @@ class YoloFireSmokeScorer:
     it per frame is not, so it's created once, not per camera."""
 
     def __init__(self, *, model_path: str, confidence_threshold: float) -> None:
+        import cv2
+        import torch
         from ultralytics import YOLO  # deferred: heavy import, torch init
+
+        # Torch defaults to one thread per CPU core for a single model, and
+        # OpenCV (Ultralytics' own preprocessing -- resize/letterbox) keeps
+        # a *separate* thread pool the same way, sized to the container's
+        # CPU count. This process runs one FrameConsumer per camera, each
+        # calling into this same model concurrently (via asyncio.to_thread)
+        # -- left unset, that's N cameras x two full-core-sized thread
+        # pools all competing for the same physical cores, which starves
+        # this process's own asyncio event loop (including its Redis stream
+        # reads) badly enough to cause read timeouts under real multi-
+        # camera load. Confirmed live: capping torch alone wasn't enough --
+        # OpenCV's pool was still at 8 threads and CPU stayed pegged at
+        # 200%+ until this was added too.
+        torch.set_num_threads(1)
+        cv2.setNumThreads(1)
 
         self._model = YOLO(model_path)
         self._confidence_threshold = confidence_threshold

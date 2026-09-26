@@ -29,7 +29,19 @@ _PLATE_CLASS_ID = 0
 
 class YoloPlateDetector:
     def __init__(self, *, model_path: str, confidence_threshold: float) -> None:
+        import cv2
+        import torch
         from ultralytics import YOLO  # deferred: heavy import, torch init
+
+        # See fire-smoke-service's yolo_scorer.py -- same fix for the same
+        # symptom, confirmed live: this service's process was pegging 200%+
+        # CPU under real multi-camera load and starving its own Redis
+        # stream reads badly enough to time out repeatedly. Capping torch
+        # alone wasn't sufficient -- OpenCV keeps its own separate thread
+        # pool for Ultralytics' preprocessing, sized to the container's CPU
+        # count, so both need capping.
+        torch.set_num_threads(1)
+        cv2.setNumThreads(1)
 
         self._model = YOLO(model_path)
         self._confidence_threshold = confidence_threshold
