@@ -22,6 +22,7 @@ import httpx
 import redis.asyncio as redis
 
 from ibvap_common.logging import get_logger
+from ibvap_common.offline_queue import OfflineEventQueue
 from ibvap_common.redis_streams import build_redis_client
 
 from app.core.config import Settings
@@ -45,6 +46,14 @@ class ReconcileManager:
         self._http = httpx.AsyncClient()
         self._camera_client = CameraClient(self._http, settings)
         self._publisher = PosePublisher(self._redis)
+        # None (default, USE_OFFLINE_EVENT_QUEUE=false) keeps EventClient's
+        # exact original behavior -- see fire-smoke-service's identical
+        # wiring/comment in its own reconcile_manager.py.
+        self._offline_queue = (
+            OfflineEventQueue(queue_path=settings.offline_queue_path, http_client=self._http)
+            if settings.use_offline_event_queue
+            else None
+        )
         # One shared instance across every camera (unlike PoseLandmarkerModel
         # above) -- see TrainedFightingDetector's own docstring. None if
         # disabled or the weights file couldn't be loaded, in which case
@@ -58,7 +67,7 @@ class ReconcileManager:
                 pair_proximity_threshold=settings.fighting_pair_proximity_threshold,
                 confidence_threshold=settings.fighting_model_confidence_threshold,
                 cooldown_seconds=settings.fighting_model_cooldown_seconds,
-                event_client=EventClient(self._http, settings),
+                event_client=EventClient(self._http, settings, self._offline_queue),
             )
             if settings.use_trained_fighting_model
             else None
@@ -72,6 +81,8 @@ class ReconcileManager:
 
     async def start(self) -> None:
         self._stopped = False
+        if self._offline_queue is not None:
+            self._offline_queue.start()
         await self._reconcile()
         self._poll_task = asyncio.create_task(self._poll_loop(), name="pose-poll-loop")
 
@@ -83,6 +94,8 @@ class ReconcileManager:
                 await self._poll_task
             except asyncio.CancelledError:
                 pass
+        if self._offline_queue is not None:
+            await self._offline_queue.stop()
         await asyncio.gather(*(c.stop() for c in self._consumers.values()))
         self._consumers.clear()
         for model in self._models.values():

@@ -1,3 +1,5 @@
+import datetime as dt
+
 from fastapi import APIRouter, Depends, Query
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,14 +22,23 @@ async def list_alerts(
     status: str | None = Query(default=None),
     severity: str | None = Query(default=None),
     camera: str | None = Query(default=None),
+    date_from: dt.datetime | None = Query(
+        default=None, alias="dateFrom", description="Alerts created at or after this instant (ISO 8601)."
+    ),
+    date_to: dt.datetime | None = Query(
+        default=None, alias="dateTo", description="Alerts created at or before this instant (ISO 8601)."
+    ),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=50, ge=1, le=200, alias="pageSize"),
+    # Ceiling raised from 200 (same reasoning as events.py's own pageSize
+    # ceiling) so an export can fetch a large filtered set in a few requests.
+    page_size: int = Query(default=50, ge=1, le=1000, alias="pageSize"),
     session: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
     _user: TokenPayload = Depends(require_role("viewer")),
 ) -> AlertListResponse:
     rows, total = await AlertRepository(session).list_paginated(
-        camera_id=camera, severity=severity, status=status, page=page, page_size=page_size
+        camera_id=camera, severity=severity, status=status, date_from=date_from, date_to=date_to,
+        page=page, page_size=page_size,
     )
     return AlertListResponse(
         items=[to_alert_read(row, settings) for row in rows], total=total, page=page, page_size=page_size

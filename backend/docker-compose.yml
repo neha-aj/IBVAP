@@ -27,6 +27,8 @@ volumes:
   detection-models:
   prometheus-data:
   grafana-data:
+  fire-smoke-offline-queue:
+  pose-offline-queue:
 
 services:
   postgres:
@@ -334,8 +336,13 @@ services:
       # unaffected either way.
       USE_TRAINED_FIRE_SMOKE_MODEL: "true"
       FIRE_SMOKE_MODEL_PATH: /srv/custom-models/fire_smoke_best.pt
+      # A detection that can't reach event-alert-service is queued to disk
+      # and retried instead of being logged and dropped for good -- see
+      # libs/ibvap_common/ibvap_common/offline_queue.py's own docstring.
+      USE_OFFLINE_EVENT_QUEUE: "true"
     volumes:
       - ./models/fire_smoke_best.pt:/srv/custom-models/fire_smoke_best.pt:ro
+      - fire-smoke-offline-queue:/data/offline-queue
     depends_on:
       redis:
         condition: service_healthy
@@ -370,8 +377,10 @@ services:
       # is ever missing.
       USE_TRAINED_FIGHTING_MODEL: "true"
       FIGHTING_MODEL_PATH: /srv/custom-models/fighting_classifier.pt
+      USE_OFFLINE_EVENT_QUEUE: "true"
     volumes:
       - ./models/fighting_classifier.pt:/srv/custom-models/fighting_classifier.pt:ro
+      - pose-offline-queue:/data/offline-queue
     depends_on:
       redis:
         condition: service_healthy

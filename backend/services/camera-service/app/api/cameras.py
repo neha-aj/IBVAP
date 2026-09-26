@@ -16,6 +16,7 @@ from app.db.session import get_db
 from app.redis_client import get_redis_client
 from app.repositories.camera_repo import CameraRepository
 from app.repositories.sector_repo import SectorRepository
+from app.services import admin_audit_log_service
 from app.schemas.camera import (
     CameraCreate,
     CameraDetail,
@@ -185,9 +186,15 @@ async def resume_camera(
 async def create_camera(
     payload: CameraCreate,
     service: CameraService = Depends(get_camera_service),
+    session: AsyncSession = Depends(get_db),
     _user: TokenPayload = Depends(require_role("admin")),
 ) -> CameraDetail:
-    return await service.create_camera(payload)
+    camera = await service.create_camera(payload)
+    await admin_audit_log_service.append_audit_entry(
+        session, action="camera.created", actor=_user.username, target_type="camera",
+        target_id=camera.id, details=f"name={camera.name!r} type={payload.type!r}",
+    )
+    return camera
 
 
 @router.put("/{camera_id}", response_model=CameraDetail)
@@ -195,18 +202,30 @@ async def update_camera(
     camera_id: str,
     payload: CameraUpdate,
     service: CameraService = Depends(get_camera_service),
+    session: AsyncSession = Depends(get_db),
     _user: TokenPayload = Depends(require_role("admin")),
 ) -> CameraDetail:
-    return await service.update_camera(camera_id, payload)
+    camera = await service.update_camera(camera_id, payload)
+    changed_fields = sorted(payload.model_dump(exclude_unset=True, exclude_none=True).keys())
+    await admin_audit_log_service.append_audit_entry(
+        session, action="camera.updated", actor=_user.username, target_type="camera",
+        target_id=camera_id, details=f"changed={changed_fields}" if changed_fields else None,
+    )
+    return camera
 
 
 @router.delete("/{camera_id}", status_code=204)
 async def delete_camera(
     camera_id: str,
     service: CameraService = Depends(get_camera_service),
+    session: AsyncSession = Depends(get_db),
     _user: TokenPayload = Depends(require_role("admin")),
 ) -> None:
     await service.delete_camera(camera_id)
+    await admin_audit_log_service.append_audit_entry(
+        session, action="camera.deleted", actor=_user.username, target_type="camera",
+        target_id=camera_id, details=None,
+    )
 
 
 @router.post("/{camera_id}/thermal/generate", response_model=CameraDetail)

@@ -11,6 +11,7 @@ from app.api import data_management as data_management_routes
 from app.api import events as event_routes
 from app.api import health as health_routes
 from app.api import internal_events as internal_event_routes
+from app.api import rule_settings as rule_settings_routes
 from app.core.config import get_settings
 from app.db.session import get_session_factory
 from app.streaming.reconcile_manager import ReconcileManager
@@ -38,6 +39,11 @@ def create_app() -> FastAPI:
     install_error_handlers(app)
     app.include_router(event_routes.router)
     app.include_router(data_management_routes.router)
+    # Registered before alert_routes: its static /alerts/thresholds path
+    # would otherwise be shadowed by alert_routes' GET /{alert_id} (same
+    # ordering concern camera-service's admin_audit_log router has against
+    # its own GET /{camera_id}).
+    app.include_router(rule_settings_routes.router)
     app.include_router(alert_routes.router)
     app.include_router(internal_event_routes.router)
     app.include_router(health_routes.router)

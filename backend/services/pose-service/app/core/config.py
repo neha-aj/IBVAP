@@ -101,6 +101,12 @@ class Settings(CommonSettings):
     # tick -- same reasoning as fire-smoke-service's own alert_cooldown_seconds.
     fighting_model_cooldown_seconds: float = 60.0
 
+    # --- Offline event queue (ibvap_common.offline_queue) ---
+    # Off by default -- see fire-smoke-service's identical settings/
+    # comment in its own config.py.
+    use_offline_event_queue: bool = False
+    offline_queue_path: str = "/data/offline-queue/pose-service.jsonl"
+
 
 @lru_cache
 def get_settings() -> Settings:

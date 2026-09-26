@@ -7,6 +7,7 @@ from ibvap_common.errors import install_error_handlers
 from ibvap_common.logging import configure_logging, get_logger, install_correlation_id_middleware
 from ibvap_common.metrics import install_metrics
 
+from app.api import admin_audit_log as admin_audit_log_routes
 from app.api import cameras as camera_routes
 from app.api import health as health_routes
 from app.api import internal as internal_routes
@@ -46,6 +47,11 @@ def create_app() -> FastAPI:
     install_correlation_id_middleware(app)
     install_metrics(app, settings.service_name)
     install_error_handlers(app)
+    # Registered before camera_routes: its static /cameras/audit-log path
+    # would otherwise be shadowed by camera_routes' GET /{camera_id}
+    # (same reasoning as that router's own /paused route, which has the
+    # identical ordering concern against /{camera_id}).
+    app.include_router(admin_audit_log_routes.router)
     app.include_router(camera_routes.router)
     app.include_router(zone_routes.router)
     app.include_router(sector_routes.router)

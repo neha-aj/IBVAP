@@ -17,6 +17,7 @@ from ibvap_common.redis_streams import build_redis_client
 
 from app.core.config import Settings
 from app.rules.engine import RuleEngine
+from app.services.rule_settings_service import RuleSettingsCache
 from app.streaming.camera_client import CameraClient
 from app.streaming.pubsub_publisher import PubSubPublisher
 from app.streaming.recording_client import RecordingClient
@@ -37,9 +38,10 @@ class ReconcileManager:
         self._camera_client = CameraClient(self._http, settings)
         self._snapshot_client = SnapshotClient(self._http, settings)
         self._recording_client = RecordingClient(self._http, settings)
+        self._rule_settings = RuleSettingsCache()
         self._rule_engine = RuleEngine(
             settings, self._camera_client.get_zones, self._camera_client.get_zone_lines,
-            self._camera_client.get_camera_info,
+            self._camera_client.get_camera_info, self._rule_settings,
         )
         self._publisher = PubSubPublisher(
             self._redis, self._camera_client, self._snapshot_client, self._recording_client, session_factory,
@@ -59,6 +61,17 @@ class ReconcileManager:
         return len(self._consumers)
 
     @property
+    def rule_settings(self) -> RuleSettingsCache:
+        """Exposed for the admin rule-thresholds API (`app/api/rule_settings.py`)
+        so an edit can force an immediate `refresh()` instead of waiting up
+        to a full poll interval for the running rule engine to pick it up."""
+        return self._rule_settings
+
+    @property
+    def session_factory(self) -> async_sessionmaker[AsyncSession]:
+        return self._session_factory
+
+    @property
     def publisher(self) -> PubSubPublisher:
         """Exposed for `POST /internal/events` (doc08 §4's shared ingestion
         path for Category B AI services) -- reuses this same publisher
@@ -68,6 +81,10 @@ class ReconcileManager:
 
     async def start(self) -> None:
         self._stopped = False
+        # Loads any existing admin overrides before the first track event
+        # can arrive, rather than waiting up to a full poll interval.
+        await self._rule_settings.refresh(self._session_factory)
+        self._rule_settings.start(self._session_factory)
         self._status_consumer.start()
         await self._reconcile()
         self._poll_task = asyncio.create_task(self._poll_loop(), name="event-alert-poll-loop")
@@ -80,6 +97,7 @@ class ReconcileManager:
                 await self._poll_task
             except asyncio.CancelledError:
                 pass
+        await self._rule_settings.stop()
         await self._status_consumer.stop()
         await asyncio.gather(*(c.stop() for c in self._consumers.values()))
         self._consumers.clear()

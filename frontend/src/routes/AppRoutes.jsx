@@ -13,6 +13,7 @@ import Analytics from "../pages/Analytics";
 import LicensePlates from "../pages/LicensePlates";
 import PersonSearch from "../pages/PersonSearch";
 import Settings from "../pages/Settings";
+import AdminAuditLog from "../pages/AdminAuditLog";
 
 const page = (Component) => (
   <DashboardLayout>
@@ -36,6 +37,7 @@ export default function AppRoutes() {
         <Route path="/anpr" element={page(LicensePlates)} />
         <Route path="/reid" element={page(PersonSearch)} />
         <Route path="/settings" element={page(Settings)} />
+        <Route path="/audit-log" element={<AdminRoute>{page(AdminAuditLog)}</AdminRoute>} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

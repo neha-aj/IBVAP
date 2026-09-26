@@ -22,6 +22,7 @@ from app.rules import (
     abandoned_object, direction, fighting, intrusion, line_crossing, loitering, offline_alert, speed, zone_crossing,
 )
 from app.schemas.internal import BoundingBox, CameraInfo, Point, TrackEvent, Zone, ZoneLine
+from app.services.rule_settings_service import RuleSettingsCache
 
 ZoneProvider = Callable[[str], Awaitable[list[Zone]]]
 ZoneLineProvider = Callable[[str], Awaitable[list[ZoneLine]]]
@@ -72,9 +73,14 @@ def _bbox_center_distance(a: BoundingBox, b: BoundingBox) -> float:
 class RuleEngine:
     def __init__(
         self, settings: Settings, zone_provider: ZoneProvider, zone_line_provider: ZoneLineProvider | None = None,
-        camera_info_provider: CameraInfoProvider | None = None,
+        camera_info_provider: CameraInfoProvider | None = None, rule_settings: RuleSettingsCache | None = None,
     ) -> None:
         self._settings = settings
+        # Optional (defaults to "no admin overrides exist") -- every
+        # existing test/caller that constructs a RuleEngine directly
+        # without one keeps reading config.py's static defaults exactly as
+        # before this feature existed (see _threshold below).
+        self._rule_settings = rule_settings
         self._zone_provider = zone_provider
         # Optional (defaults to "no lines configured anywhere") so existing
         # callers/tests that only care about polygon zones don't need to
@@ -154,6 +160,14 @@ class RuleEngine:
     def _dwell_start(self, key: tuple[str, str], first_seen: dt.datetime) -> dt.datetime:
         return first_seen + self._dwell_offset.get(key, dt.timedelta())
 
+    def _threshold(self, key: str, default: float) -> float:
+        """An admin-tunable threshold's current effective value -- the
+        override from `rule_settings_service` if one's been set, otherwise
+        `default` (config.py's own static value), completely unchanged
+        from before this feature existed if no `RuleSettingsCache` was
+        ever provided."""
+        return self._rule_settings.get(key, default) if self._rule_settings is not None else default
+
     async def handle_track_event(
         self, event: TrackEvent, track_repo: TrackRepository, now: dt.datetime
     ) -> list[EventDraft]:
@@ -228,9 +242,10 @@ class RuleEngine:
                 # stationary bag has its own, separate, more specific rule
                 # below (Abandoned Object), so it's excluded here too rather
                 # than double-firing under two different event types.
+                loitering_threshold = self._threshold("loitering_seconds_threshold", self._settings.loitering_seconds_threshold)
                 if event.object_type == "person" and key not in self._loitering_fired and loitering.has_exceeded_dwell_time(
                     self._dwell_start(key, track.first_seen), now,
-                    threshold_seconds=self._settings.loitering_seconds_threshold
+                    threshold_seconds=loitering_threshold
                 ):
                     self._loitering_fired.add(key)
                     drafts.append(
@@ -239,7 +254,7 @@ class RuleEngine:
                             event_type="Loitering Detected",
                             object_type=event.object_type,
                             severity="medium",
-                            description=f"Person present for over {self._settings.loitering_seconds_threshold}s",
+                            description=f"Person present for over {loitering_threshold}s",
                             requires_review=True,
                         )
                     )
@@ -251,11 +266,14 @@ class RuleEngine:
                 # is generic "something's been still a while", this is the
                 # specific "nobody's with this bag" alert. See
                 # `rules/abandoned_object.py`.
+                abandoned_seconds_threshold = self._threshold(
+                    "abandoned_object_seconds_threshold", self._settings.abandoned_object_seconds_threshold
+                )
                 if (
                     event.object_type == "bag" and event.bbox is not None and key not in self._abandoned_fired
                     and loitering.has_exceeded_dwell_time(
                         self._dwell_start(key, track.first_seen), now,
-                        threshold_seconds=self._settings.abandoned_object_seconds_threshold
+                        threshold_seconds=abandoned_seconds_threshold
                     )
                 ):
                     nearby_people = [
@@ -263,7 +281,9 @@ class RuleEngine:
                     ]
                     if abandoned_object.is_unattended(
                         event.bbox, nearby_people,
-                        proximity_threshold=self._settings.abandoned_object_proximity_threshold,
+                        proximity_threshold=self._threshold(
+                            "abandoned_object_proximity_threshold", self._settings.abandoned_object_proximity_threshold
+                        ),
                     ):
                         self._abandoned_fired.add(key)
                         drafts.append(
@@ -274,7 +294,7 @@ class RuleEngine:
                                 severity="high",
                                 description=(
                                     f"Unattended object present for over "
-                                    f"{self._settings.abandoned_object_seconds_threshold}s with no person nearby"
+                                    f"{abandoned_seconds_threshold}s with no person nearby"
                                 ),
                                 requires_review=True,
                             )
@@ -337,8 +357,12 @@ class RuleEngine:
                     _LostTrack(track_ref=resolved_ref, object_type=event.object_type, bbox=last_bbox, lost_at=now)
                 )
 
-        drafts.extend(self._check_count_threshold(event.camera_id, "person", self._settings.person_count_threshold))
-        drafts.extend(self._check_count_threshold(event.camera_id, "vehicle", self._settings.vehicle_count_threshold))
+        drafts.extend(self._check_count_threshold(
+            event.camera_id, "person", int(self._threshold("person_count_threshold", self._settings.person_count_threshold))
+        ))
+        drafts.extend(self._check_count_threshold(
+            event.camera_id, "vehicle", int(self._threshold("vehicle_count_threshold", self._settings.vehicle_count_threshold))
+        ))
 
         if event.bbox is not None and event.event in ("track.started", "track.updated"):
             zone_draft = await self._check_zone_entry(event, resolved_ref)
@@ -590,9 +614,11 @@ class RuleEngine:
             history_b = self._displacement_history.get((cam_id, other_ref), [])
             if not fighting.pair_is_fighting(
                 distance, history_a, history_b,
-                proximity_threshold=self._settings.fighting_proximity_threshold,
-                jitter_threshold=self._settings.fighting_jitter_threshold,
-                min_mean_displacement=self._settings.fighting_min_mean_displacement,
+                proximity_threshold=self._threshold("fighting_proximity_threshold", self._settings.fighting_proximity_threshold),
+                jitter_threshold=self._threshold("fighting_jitter_threshold", self._settings.fighting_jitter_threshold),
+                min_mean_displacement=self._threshold(
+                    "fighting_min_mean_displacement", self._settings.fighting_min_mean_displacement
+                ),
             ):
                 continue
             pair_key = (camera_id, frozenset({track_ref, other_ref}))

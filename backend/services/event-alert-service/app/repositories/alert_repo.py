@@ -50,6 +50,8 @@ class AlertRepository:
         camera_id: str | None,
         severity: str | None,
         status: str | None,
+        date_from: dt.datetime | None = None,
+        date_to: dt.datetime | None = None,
         page: int,
         page_size: int,
     ) -> tuple[list[Alert], int]:
@@ -60,6 +62,10 @@ class AlertRepository:
             stmt = stmt.where(Alert.severity == severity)
         if status:
             stmt = stmt.where(Alert.status == status)
+        if date_from:
+            stmt = stmt.where(Alert.created_at >= date_from)
+        if date_to:
+            stmt = stmt.where(Alert.created_at <= date_to)
 
         count_stmt = select(func.count()).select_from(stmt.subquery())
         total = (await self._session.execute(count_stmt)).scalar_one()

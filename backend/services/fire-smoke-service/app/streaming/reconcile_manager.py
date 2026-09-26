@@ -12,6 +12,7 @@ import httpx
 import redis.asyncio as redis
 
 from ibvap_common.logging import get_logger
+from ibvap_common.offline_queue import OfflineEventQueue
 from ibvap_common.redis_streams import build_redis_client
 
 from app.core.config import Settings
@@ -31,7 +32,16 @@ class ReconcileManager:
         self._redis: redis.Redis = build_redis_client(settings)
         self._http = httpx.AsyncClient()
         self._camera_client = CameraClient(self._http, settings)
-        self._event_client = EventClient(self._http, settings)
+        # None (default, USE_OFFLINE_EVENT_QUEUE=false) keeps EventClient's
+        # exact original behavior: a failed report to event-alert-service
+        # is logged and dropped -- see offline_queue.py's own docstring for
+        # why this exists and what it deliberately doesn't cover.
+        self._offline_queue = (
+            OfflineEventQueue(queue_path=settings.offline_queue_path, http_client=self._http)
+            if settings.use_offline_event_queue
+            else None
+        )
+        self._event_client = EventClient(self._http, settings, self._offline_queue)
         self._poll_task: asyncio.Task | None = None
         self._stopped = False
         # One shared model instance for every camera's FireSmokeService
@@ -53,6 +63,8 @@ class ReconcileManager:
 
     async def start(self) -> None:
         self._stopped = False
+        if self._offline_queue is not None:
+            self._offline_queue.start()
         await self._reconcile()
         self._poll_task = asyncio.create_task(self._poll_loop(), name="fire-smoke-poll-loop")
 
@@ -64,6 +76,8 @@ class ReconcileManager:
                 await self._poll_task
             except asyncio.CancelledError:
                 pass
+        if self._offline_queue is not None:
+            await self._offline_queue.stop()
         await asyncio.gather(*(c.stop() for c in self._consumers.values()))
         self._consumers.clear()
         await self._http.aclose()

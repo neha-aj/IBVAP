@@ -86,6 +86,14 @@ class Settings(CommonSettings):
     # same way fire_min_area_fraction above was, if needed.
     fire_smoke_model_confidence_threshold: float = 0.4
 
+    # --- Offline event queue (ibvap_common.offline_queue) ---
+    # Off by default -- when enabled, a detection that fails to reach
+    # event-alert-service is queued to local disk and retried instead of
+    # being logged and dropped for good. See that module's own docstring
+    # for exactly what this does and doesn't cover.
+    use_offline_event_queue: bool = False
+    offline_queue_path: str = "/data/offline-queue/fire-smoke-service.jsonl"
+
 
 @lru_cache
 def get_settings() -> Settings:
